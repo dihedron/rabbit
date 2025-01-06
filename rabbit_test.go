@@ -13,6 +13,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/pkg/errors"
 	uuid "github.com/satori/go.uuid"
+
 	// to test with logrus, uncomment the following
 	// and the log initialiser in generateOptions()
 	// "github.com/sirupsen/logrus"
@@ -159,7 +160,7 @@ var _ = Describe("Rabbit", func() {
 				var exit bool
 
 				go func() {
-					r.Consume(nil, nil, func(m amqp.Delivery) error {
+					r.Consume(context.Background(), nil, func(m amqp.Delivery) error {
 						return nil
 					})
 
@@ -305,7 +306,7 @@ var _ = Describe("Rabbit", func() {
 				receivedMessages := make([]string, 0)
 
 				go func() {
-					r.Consume(nil, nil, func(msg amqp.Delivery) error {
+					r.Consume(context.Background(), nil, func(msg amqp.Delivery) error {
 						receivedMessages = append(receivedMessages, string(msg.Body))
 						return errors.New("stuff broke")
 					})
@@ -339,7 +340,7 @@ var _ = Describe("Rabbit", func() {
 				Expect(err).ToNot(HaveOccurred())
 				Expect(ra).ToNot(BeNil())
 
-				err = ra.ConsumeOnce(nil, func(m amqp.Delivery) error { return nil })
+				err = ra.ConsumeOnce(context.Background(), func(m amqp.Delivery) error { return nil })
 
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("library is configured in Producer mode"))
@@ -353,7 +354,7 @@ var _ = Describe("Rabbit", func() {
 				var exit bool
 
 				go func() {
-					consumeErr = r.ConsumeOnce(nil, func(msg amqp.Delivery) error {
+					consumeErr = r.ConsumeOnce(context.Background(), func(msg amqp.Delivery) error {
 						receivedMessage = string(msg.Body)
 						return nil
 					})
@@ -425,7 +426,7 @@ var _ = Describe("Rabbit", func() {
 				var exit bool
 
 				go func() {
-					consumeErr = r.ConsumeOnce(nil, func(msg amqp.Delivery) error {
+					consumeErr = r.ConsumeOnce(context.Background(), func(msg amqp.Delivery) error {
 						return errors.New("something broke")
 					})
 
@@ -470,7 +471,7 @@ var _ = Describe("Rabbit", func() {
 				time.Sleep(25 * time.Millisecond)
 
 				testMessage := []byte(uuid.NewV4().String())
-				publishErr := r.Publish(nil, opts.Bindings[0].BindingKeys[0], testMessage)
+				publishErr := r.Publish(context.Background(), opts.Bindings[0].BindingKeys[0], testMessage)
 
 				Expect(publishErr).ToNot(HaveOccurred())
 
@@ -489,7 +490,7 @@ var _ = Describe("Rabbit", func() {
 					Expect(err).ToNot(HaveOccurred())
 					Expect(ra).ToNot(BeNil())
 
-					err = ra.Publish(nil, "messages", []byte("test"))
+					err = ra.Publish(context.Background(), "messages", []byte("test"))
 
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring("library is configured in Consumer mode"))
@@ -525,7 +526,7 @@ var _ = Describe("Rabbit", func() {
 				time.Sleep(25 * time.Millisecond)
 
 				testMessage := []byte(uuid.NewV4().String())
-				publishErr := r.Publish(nil, opts.Bindings[0].BindingKeys[0], testMessage)
+				publishErr := r.Publish(context.Background(), opts.Bindings[0].BindingKeys[0], testMessage)
 
 				Expect(publishErr).ToNot(HaveOccurred())
 
@@ -544,7 +545,7 @@ var _ = Describe("Rabbit", func() {
 				var exit bool
 
 				go func() {
-					r.Consume(nil, nil, func(msg amqp.Delivery) error {
+					r.Consume(context.Background(), nil, func(msg amqp.Delivery) error {
 						receivedMessage = string(msg.Body)
 						return nil
 					})
@@ -582,7 +583,7 @@ var _ = Describe("Rabbit", func() {
 				Expect(err).ToNot(HaveOccurred())
 
 				// This shouldn't block because internal ctx func should have been called
-				r.Consume(nil, nil, func(m amqp.Delivery) error {
+				r.Consume(context.Background(), nil, func(m amqp.Delivery) error {
 					return nil
 				})
 
@@ -596,7 +597,7 @@ var _ = Describe("Rabbit", func() {
 				Expect(err).ToNot(HaveOccurred())
 
 				// This shouldn't block because internal ctx func should have been called
-				err = r.ConsumeOnce(nil, func(m amqp.Delivery) error {
+				err = r.ConsumeOnce(context.Background(), func(m amqp.Delivery) error {
 					return nil
 				})
 
@@ -610,7 +611,7 @@ var _ = Describe("Rabbit", func() {
 				err := r.Close()
 				Expect(err).ToNot(HaveOccurred())
 
-				err = r.Publish(nil, "messages", []byte("testing"))
+				err = r.Publish(context.Background(), "messages", []byte("testing"))
 
 				Expect(err).To(HaveOccurred())
 				Expect(err).To(Equal(ErrShutdown))
@@ -806,7 +807,6 @@ var _ = Describe("Rabbit", func() {
 					ProducerRWMutex:         &sync.RWMutex{},
 					Options:                 opts,
 
-					log:    &NoOpLogger{},
 					ctx:    ctx,
 					cancel: cancel,
 				}

@@ -28,9 +28,7 @@ func DefaultAckPolicy() *RetryPolicy {
 // NewRetryPolicy returns a new backoff policy with the given delays.
 func NewRetryPolicy(maxAttempts int, t ...time.Duration) *RetryPolicy {
 	times := make([]time.Duration, 0)
-	for _, d := range t {
-		times = append(times, d)
-	}
+	times = append(times, t...)
 	return &RetryPolicy{
 		DelayMS:     times,
 		MaxAttempts: maxAttempts,
