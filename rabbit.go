@@ -16,6 +16,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -82,7 +83,6 @@ type Rabbit struct {
 	shutdown bool
 	ctx      context.Context
 	cancel   func()
-	log      Logger
 }
 
 // Mode is the type used to represent whether the RabbitMQ
@@ -167,9 +167,6 @@ type Options struct {
 
 	// Skip cert verification (only applies if UseTLS is true)
 	SkipVerifyTLS bool
-
-	// Log is the (optional) logger to use for writing out log messages.
-	Log Logger
 }
 
 // ConsumeError will be passed down the error channel if/when `f()` func runs
@@ -185,12 +182,15 @@ func New(opts *Options) (*Rabbit, error) {
 		return nil, errors.Wrap(err, "invalid options")
 	}
 
+	slog.Info("options validated")
+
 	var ac *amqp.Connection
 	var err error
 
 	// try all available URLs in a loop and quit as soon as it
 	// can successfully establish a connection to one of them
 	for _, url := range opts.URLs {
+		slog.Info("trying to dial server", "url", url)
 		if opts.UseTLS {
 			tlsConfig := &tls.Config{}
 
@@ -205,13 +205,19 @@ func New(opts *Options) (*Rabbit, error) {
 
 		if err == nil {
 			// yes, we made it!
+			slog.Info("successfully connected to server", "url", url)
 			break
+		} else {
+			slog.Warn("could not connect to server", "url", url, "error", err)
 		}
 	}
 
 	if err != nil {
+		slog.Error("unable to dial server", "error", err)
 		return nil, errors.Wrap(err, "unable to dial server")
 	}
+
+	slog.Info("connected to server")
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -225,10 +231,8 @@ func New(opts *Options) (*Rabbit, error) {
 		ReconnectInProgressMtx: &sync.RWMutex{},
 		ProducerRWMutex:        &sync.RWMutex{},
 		Options:                opts,
-
-		ctx:    ctx,
-		cancel: cancel,
-		log:    opts.Log,
+		ctx:                    ctx,
+		cancel:                 cancel,
 	}
 
 	if opts.Mode != Producer {
@@ -325,10 +329,6 @@ func applyDefaults(opts *Options) {
 		opts.ConsumerTag = DefaultConsumerTag
 	}
 
-	if opts.Log == nil {
-		opts.Log = &NoOpLogger{}
-	}
-
 	if opts.QueueArgs == nil {
 		opts.QueueArgs = make(map[string]interface{})
 	}
@@ -373,12 +373,12 @@ func (r *Rabbit) Consume(ctx context.Context, errChan chan *ConsumeError, f func
 	}
 
 	if r.shutdown {
-		r.log.Error(ErrShutdown)
+		slog.Error("client is shut down", "error", ErrShutdown)
 		return
 	}
 
 	if r.Options.Mode == Producer {
-		r.log.Error("unable to Consume() - library is configured in Producer mode")
+		slog.Error("unable to Consume() - library is configured in Producer mode")
 		return
 	}
 
@@ -389,7 +389,7 @@ func (r *Rabbit) Consume(ctx context.Context, errChan chan *ConsumeError, f func
 		ctx = context.Background()
 	}
 
-	r.log.Debug("waiting for messages from rabbit ...")
+	slog.Debug("waiting for messages from rabbit ...")
 
 	var retries int
 
@@ -440,24 +440,24 @@ MAIN:
 				break
 			}
 		case <-ctx.Done():
-			r.log.Warn("Consume stopped via local context")
+			slog.Warn("Consume stopped via local context")
 			break MAIN
 		case <-r.ctx.Done():
-			r.log.Warn("Consume stopped via global context")
+			slog.Warn("Consume stopped via global context")
 			break MAIN
 		}
 	}
 
-	r.log.Debug("Consume finished - exiting")
+	slog.Debug("Consume finished - exiting")
 }
 
 func (r *Rabbit) writeError(errChan chan *ConsumeError, err *ConsumeError) {
 	if err == nil {
-		r.log.Error("nil 'err' passed to writeError - bug?")
+		slog.Error("nil 'err' passed to writeError - bug?")
 		return
 	}
 
-	r.log.Warnf("writeError(): %s", err.Error)
+	slog.Warn("writeError()", "error", err.Error)
 
 	if errChan == nil {
 		// Don't have an error channel, nothing else to do
@@ -466,7 +466,7 @@ func (r *Rabbit) writeError(errChan chan *ConsumeError, err *ConsumeError) {
 
 	// Only write to errChan if it's not full (to avoid goroutine leak)
 	if len(errChan) > 0 {
-		r.log.Warn("errChan is full - dropping message")
+		slog.Warn("errChan is full - dropping message")
 		return
 	}
 
@@ -498,14 +498,14 @@ func (r *Rabbit) ConsumeOnce(ctx context.Context, runFunc func(msg amqp.Delivery
 		ctx = context.Background()
 	}
 
-	r.log.Debug("waiting for a single message from rabbit ...")
+	slog.Debug("waiting for a single message from rabbit ...")
 
 	var retries int
 
 	select {
 	case msg := <-r.delivery():
 		if msg.Acknowledger == nil {
-			r.log.Warn("Detected nil acknowledger - sending signal to rabbit lib to reconnect")
+			slog.Warn("Detected nil acknowledger - sending signal to rabbit lib to reconnect")
 
 			r.ReconnectChan <- struct{}{}
 
@@ -518,29 +518,29 @@ func (r *Rabbit) ConsumeOnce(ctx context.Context, runFunc func(msg amqp.Delivery
 				if retry != nil && retry.ShouldRetry() {
 					dur := retry.Duration(retries)
 
-					r.log.Warnf("[Retry %s] error during consume: %s", retry.AttemptCount(), err)
+					slog.Warn("[Retry] error during consume", "attempt", retry.AttemptCount(), "error", err)
 
 					time.Sleep(dur)
 					retries++
 					continue RETRY
 				}
 
-				r.log.Debug("ConsumeOnce finished - exiting")
+				slog.Debug("ConsumeOnce finished - exiting")
 				return err
 			}
 
 			break
 		}
 	case <-ctx.Done():
-		r.log.Warn("ConsumeOnce stopped via local context")
+		slog.Warn("ConsumeOnce stopped via local context")
 
 		return nil
 	case <-r.ctx.Done():
-		r.log.Warn("ConsumeOnce stopped via global context")
+		slog.Warn("ConsumeOnce stopped via global context")
 		return nil
 	}
 
-	r.log.Debug("ConsumeOnce finished - exiting")
+	slog.Debug("ConsumeOnce finished - exiting")
 
 	return nil
 }
@@ -607,7 +607,7 @@ func (r *Rabbit) Publish(ctx context.Context, routingKey string, body []byte, he
 	case err := <-chanErr:
 		return errors.Wrap(err, "failed to publish message")
 	case <-ctx.Done():
-		r.log.Warn("stopped via context")
+		slog.Warn("stopped via context")
 		err := r.ProducerServerChannel.Close()
 		if err != nil {
 			return errors.Wrap(err, "failed to close producer channel")
@@ -672,18 +672,18 @@ func (r *Rabbit) runWatcher() {
 	for {
 		select {
 		case closeErr := <-r.NotifyCloseChan:
-			r.log.Debugf("received message on notify close channel: '%+v' (reconnecting)", closeErr)
+			slog.Debug("received message on notify close channel (reconnecting)", "error", closeErr)
 		case <-r.ReconnectChan:
 			if r.getReconnectInProgress() {
 				// Already reconnecting, nothing to do
-				r.log.Debug("received reconnect signal (already reconnecting)")
+				slog.Debug("received reconnect signal (already reconnecting)")
 				return
 			}
 
 			r.ReconnectInProgressMtx.Lock()
 			r.ReconnectInProgress = true
 
-			r.log.Debug("received reconnect signal (reconnecting)")
+			slog.Debug("received reconnect signal (reconnecting)")
 		}
 
 		// Acquire mutex to pause all consumers/producers while we reconnect AND prevent
@@ -696,32 +696,32 @@ func (r *Rabbit) runWatcher() {
 		for {
 			attempts++
 			if err := r.reconnect(); err != nil {
-				r.log.Warnf("unable to complete reconnect: %s; retrying in %d", err, r.Options.RetryReconnectSec)
+				slog.Warn("unable to complete reconnect, retrying...", "retry in", r.Options.RetryReconnectSec, "error", err)
 				time.Sleep(time.Duration(r.Options.RetryReconnectSec) * time.Second)
 				continue
 			}
 
-			r.log.Debugf("successfully reconnected after %d attempts", attempts)
+			slog.Debug("successfully reconnected after some attempts", "count", attempts)
 
 			break
 		}
 
 		// Create and set a new notify close channel (since old one may have gotten shutdown)
-		r.NotifyCloseChan = make(chan *amqp.Error, 0)
+		r.NotifyCloseChan = make(chan *amqp.Error)
 		r.Conn.NotifyClose(r.NotifyCloseChan)
 
 		// Update channel
 		if r.Options.Mode == Producer {
 			serverChannel, err := r.newServerChannel()
 			if err != nil {
-				r.log.Errorf("unable to set new channel: %s", err)
+				slog.Error("unable to set new channel", "error", err)
 				panic(fmt.Sprintf("unable to set new channel: %s", err))
 			}
 
 			r.ProducerServerChannel = serverChannel
 		} else {
 			if err := r.newConsumerChannel(); err != nil {
-				r.log.Errorf("unable to set new channel: %s", err)
+				slog.Error("unable to set new channel", "error", err)
 
 				// TODO: This is super shitty. Should address this.
 				panic(fmt.Sprintf("unable to set new channel: %s", err))
@@ -738,7 +738,7 @@ func (r *Rabbit) runWatcher() {
 			r.ReconnectInProgressMtx.Unlock()
 		}
 
-		r.log.Debug("runWatcher iteration has completed successfully")
+		slog.Debug("runWatcher iteration has completed successfully")
 	}
 }
 

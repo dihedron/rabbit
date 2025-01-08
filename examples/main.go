@@ -2,53 +2,61 @@ package main
 
 import (
 	"context"
+	"log/slog"
+	"os"
 
 	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/sirupsen/logrus"
-
 	"github.com/streamdal/rabbit"
 )
 
 func main() {
-	llog := logrus.New()
-	llog.SetLevel(logrus.DebugLevel)
+
+	slog.SetDefault(
+		slog.New(
+			slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+				Level:     slog.LevelDebug,
+				AddSource: true,
+			}),
+		),
+	)
 
 	// Create rabbit instance
-	r, err := setup(llog)
+	r, err := setup()
 	if err != nil {
-		llog.Fatalf("Unable to setup rabbit: %s", err)
+		slog.Error("Unable to setup rabbit", "error", err)
+		os.Exit(1)
 	}
 
 	errChan := make(chan *rabbit.ConsumeError, 1)
 
-	llog.Debug("Starting error listener...")
+	slog.Debug("Starting error listener...")
 
 	// Launch an error listener
 	go func() {
 		for {
 			select {
 			case err := <-errChan:
-				llog.Debugf("Received rabbit error: %v", err)
+				slog.Debug("Received rabbit error", "error", err)
 			}
 		}
 	}()
 
-	llog.Debug("Running consumer...")
+	slog.Debug("Running consumer...")
 
 	// Run a consumer
 	r.Consume(context.Background(), errChan, func(d amqp.Delivery) error {
-		llog.Debugf("[Received message]\nHeaders: %v\nBody: %s\n", d.Headers, d.Body)
+		slog.Debug("Received message", "headers", d.Headers, "body", d.Body)
 
 		// Acknowledge the message
 		if err := d.Ack(false); err != nil {
-			llog.Errorf("Error acknowledging message: %s", err)
+			slog.Error("Error acknowledging message", "error", err)
 		}
 
 		return nil
 	})
 }
 
-func setup(logger *logrus.Logger) (*rabbit.Rabbit, error) {
+func setup() (*rabbit.Rabbit, error) {
 	return rabbit.New(&rabbit.Options{
 		URLs:      []string{"amqp://guest:guest@localhost:5672/"},
 		Mode:      rabbit.Both,
@@ -70,6 +78,5 @@ func setup(logger *logrus.Logger) (*rabbit.Rabbit, error) {
 		QueueDeclare:      true,
 		AutoAck:           false,
 		ConsumerTag:       "rabbit-example",
-		Log:               logger,
 	})
 }
