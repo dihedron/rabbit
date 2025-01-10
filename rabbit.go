@@ -17,6 +17,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"time"
 
@@ -33,6 +34,10 @@ const (
 	// DefaultStopTimeout is the default amount of time Stop() will wait for
 	// consume function(s) to exit.
 	DefaultStopTimeout = 5 * time.Second
+
+	// DefaultConnectionTimeout is the default amount of time Dial will wait
+	// before aborting the connection to the server.
+	DefaultConnectionTimeout = 30 * time.Second
 
 	// Both means that the client is acting as both a consumer and a producer.
 	Both Mode = 0
@@ -167,6 +172,9 @@ type Options struct {
 
 	// Skip cert verification (only applies if UseTLS is true)
 	SkipVerifyTLS bool
+
+	// ConnectionTimeout is the timeout applied when dialling the server.
+	ConnectionTimeout time.Duration
 }
 
 // ConsumeError will be passed down the error channel if/when `f()` func runs
@@ -191,17 +199,37 @@ func New(opts *Options) (*Rabbit, error) {
 	// can successfully establish a connection to one of them
 	for _, url := range opts.URLs {
 		slog.Info("trying to dial server", "url", url)
-		if opts.UseTLS {
-			tlsConfig := &tls.Config{}
 
-			if opts.SkipVerifyTLS {
-				tlsConfig.InsecureSkipVerify = true
-			}
-
-			ac, err = amqp.DialTLS(url, tlsConfig)
-		} else {
-			ac, err = amqp.Dial(url)
+		if opts.ConnectionTimeout <= 0 {
+			opts.ConnectionTimeout = DefaultConnectionTimeout
 		}
+
+		config := amqp.Config{
+			Dial: func(network, addr string) (net.Conn, error) {
+				conn, err := net.DialTimeout(network, addr, opts.ConnectionTimeout)
+				if err != nil {
+					return nil, err
+				}
+
+				// Heartbeating hasn't started yet, don't stall forever on a dead server.
+				// A deadline is set for TLS and AMQP handshaking. After AMQP is established,
+				// the deadline is cleared in openComplete.
+				if err := conn.SetDeadline(time.Now().Add(opts.ConnectionTimeout)); err != nil {
+					return nil, err
+				}
+
+				return conn, nil
+			},
+		}
+
+		if opts.UseTLS {
+			config.TLSClientConfig = &tls.Config{}
+			if opts.SkipVerifyTLS {
+				config.TLSClientConfig.InsecureSkipVerify = true
+			}
+		}
+
+		ac, err = amqp.DialConfig(url, config)
 
 		if err == nil {
 			// yes, we made it!
