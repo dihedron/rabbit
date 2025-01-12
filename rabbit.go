@@ -200,10 +200,6 @@ func New(opts *Options) (*Rabbit, error) {
 	for _, url := range opts.URLs {
 		slog.Info("trying to dial server", "url", url)
 
-		if opts.ConnectionTimeout <= 0 {
-			opts.ConnectionTimeout = DefaultConnectionTimeout
-		}
-
 		config := amqp.Config{
 			Dial: func(network, addr string) (net.Conn, error) {
 				conn, err := net.DialTimeout(network, addr, opts.ConnectionTimeout)
@@ -359,6 +355,10 @@ func applyDefaults(opts *Options) {
 
 	if opts.QueueArgs == nil {
 		opts.QueueArgs = make(map[string]interface{})
+	}
+
+	if opts.ConnectionTimeout <= 0 {
+		opts.ConnectionTimeout = DefaultConnectionTimeout
 	}
 }
 
