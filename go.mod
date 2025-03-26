@@ -1,6 +1,6 @@
-module github.com/streamdal/rabbit
+module github.com/dihedron/rabbit
 
-go 1.14
+go 1.23
 
 require (
 	github.com/kr/pretty v0.2.0 // indirect

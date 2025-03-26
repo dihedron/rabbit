@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/dihedron/rabbit"
 	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/streamdal/rabbit"
 )
 
 func main() {
