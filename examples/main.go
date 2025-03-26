@@ -23,33 +23,30 @@ func main() {
 	// Create rabbit instance
 	r, err := setup()
 	if err != nil {
-		slog.Error("Unable to setup rabbit", "error", err)
+		slog.Error("unable to setup rabbit", "error", err)
 		os.Exit(1)
 	}
 
 	errChan := make(chan *rabbit.ConsumeError, 1)
 
-	slog.Debug("Starting error listener...")
+	slog.Debug("starting error listener...")
 
 	// Launch an error listener
 	go func() {
-		for {
-			select {
-			case err := <-errChan:
-				slog.Debug("Received rabbit error", "error", err)
-			}
+		for err := range errChan {
+			slog.Debug("received rabbit error", "error", err)
 		}
 	}()
 
-	slog.Debug("Running consumer...")
+	slog.Debug("running consumer...")
 
 	// Run a consumer
 	r.Consume(context.Background(), errChan, func(d amqp.Delivery) error {
-		slog.Debug("Received message", "headers", d.Headers, "body", d.Body)
+		slog.Debug("received message", "headers", d.Headers, "body", d.Body)
 
 		// Acknowledge the message
 		if err := d.Ack(false); err != nil {
-			slog.Error("Error acknowledging message", "error", err)
+			slog.Error("error acknowledging message", "error", err)
 		}
 
 		return nil
