@@ -5,14 +5,16 @@ package rabbit
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"github.com/pkg/errors"
-	uuid "github.com/satori/go.uuid"
+
+	"github.com/google/uuid"
 
 	// to test with logrus, uncomment the following
 	// and the log initialiser in generateOptions()
@@ -470,7 +472,7 @@ var _ = Describe("Rabbit", func() {
 
 				time.Sleep(25 * time.Millisecond)
 
-				testMessage := []byte(uuid.NewV4().String())
+				testMessage := []byte(uuid.New().String())
 				publishErr := r.Publish(context.Background(), opts.Bindings[0].BindingKeys[0], testMessage)
 
 				Expect(publishErr).ToNot(HaveOccurred())
@@ -503,7 +505,7 @@ var _ = Describe("Rabbit", func() {
 				ctx, cancel := context.WithCancel(context.Background())
 				cancel()
 
-				testMessage := []byte(uuid.NewV4().String())
+				testMessage := []byte(uuid.New().String())
 				publishErr := r.Publish(ctx, opts.Bindings[0].BindingKeys[0], testMessage)
 
 				Expect(publishErr).To(HaveOccurred())
@@ -525,7 +527,7 @@ var _ = Describe("Rabbit", func() {
 
 				time.Sleep(25 * time.Millisecond)
 
-				testMessage := []byte(uuid.NewV4().String())
+				testMessage := []byte(uuid.New().String())
 				publishErr := r.Publish(context.Background(), opts.Bindings[0].BindingKeys[0], testMessage)
 
 				Expect(publishErr).ToNot(HaveOccurred())
@@ -854,11 +856,11 @@ var _ = Describe("Rabbit", func() {
 })
 
 func generateOptions() *Options {
-	exchangeName := "rabbit-" + uuid.NewV4().String()
+	exchangeName := "rabbit-" + uuid.New().String()
 
 	return &Options{
 		URLs:      []string{"amqp://localhost"},
-		QueueName: "rabbit-" + uuid.NewV4().String(),
+		QueueName: "rabbit-" + uuid.New().String(),
 		Bindings: []Binding{
 			{
 				ExchangeName:       exchangeName,
@@ -886,7 +888,7 @@ func generateRandomStrings(num int) []string {
 	generated := make([]string, 0)
 
 	for i := 0; i != num; i++ {
-		generated = append(generated, uuid.NewV4().String())
+		generated = append(generated, uuid.New().String())
 	}
 
 	return generated
@@ -904,12 +906,12 @@ func connect(opts *Options) (*amqp.Channel, error) {
 		}
 	}
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to dial rabbit server")
+		return nil, fmt.Errorf("unable to dial rabbit server: %w", err)
 	}
 
 	ch, err := ac.Channel()
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to instantiate channel")
+		return nil, fmt.Errorf("unable to instantiate channel: %w", err)
 	}
 
 	return ch, nil
@@ -929,7 +931,7 @@ func publishMessages(ch *amqp.Channel, opts *Options, messages []string) error {
 }
 
 func receiveMessage(ch *amqp.Channel, opts *Options) (*amqp.Delivery, error) {
-	tmpQueueName := "rabbit-receiveMessages-" + uuid.NewV4().String()
+	tmpQueueName := "rabbit-receiveMessages-" + uuid.New().String()
 
 	if _, err := ch.QueueDeclare(
 		tmpQueueName,
@@ -939,16 +941,16 @@ func receiveMessage(ch *amqp.Channel, opts *Options) (*amqp.Delivery, error) {
 		false,
 		nil,
 	); err != nil {
-		return nil, errors.Wrap(err, "unable to declare queue")
+		return nil, errors.New("unable to declare queue")
 	}
 
 	if err := ch.QueueBind(tmpQueueName, opts.Bindings[0].BindingKeys[0], opts.Bindings[0].ExchangeName, false, nil); err != nil {
-		return nil, errors.Wrap(err, "unable to bind queue")
+		return nil, errors.New("unable to bind queue")
 	}
 
 	deliveryChan, err := ch.Consume(tmpQueueName, "", true, false, false, false, nil)
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to create delivery channel")
+		return nil, errors.New("unable to create delivery channel")
 	}
 
 	select {

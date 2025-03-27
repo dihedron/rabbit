@@ -15,15 +15,15 @@ package rabbit
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
+	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
-	uuid "github.com/satori/go.uuid"
 )
 
 const (
@@ -54,10 +54,10 @@ var (
 	ErrShutdown = errors.New("client is shutdown")
 
 	// DefaultConsumerTag is used for identifying consumer
-	DefaultConsumerTag = "c-rabbit-" + uuid.NewV4().String()[0:8]
+	DefaultConsumerTag = "c-rabbit-" + uuid.New().String()[0:8]
 
 	// DefaultAppID is used for identifying the producer
-	DefaultAppID = "p-rabbit-" + uuid.NewV4().String()[0:8]
+	DefaultAppID = "p-rabbit-" + uuid.New().String()[0:8]
 )
 
 // IRabbit is the interface that the `rabbit` library implements. It's here as
@@ -187,7 +187,7 @@ type ConsumeError struct {
 // New is used for instantiating the library.
 func New(opts *Options) (*Rabbit, error) {
 	if err := ValidateOptions(opts); err != nil {
-		return nil, errors.Wrap(err, "invalid options")
+		return nil, fmt.Errorf("invalid options: %w", err)
 	}
 
 	slog.Info("options validated")
@@ -238,7 +238,7 @@ func New(opts *Options) (*Rabbit, error) {
 
 	if err != nil {
 		slog.Error("unable to dial server", "error", err)
-		return nil, errors.Wrap(err, "unable to dial server")
+		return nil, fmt.Errorf("unable to dial server: %w", err)
 	}
 
 	slog.Info("connected to server")
@@ -261,7 +261,7 @@ func New(opts *Options) (*Rabbit, error) {
 
 	if opts.Mode != Producer {
 		if err := r.newConsumerChannel(); err != nil {
-			return nil, errors.Wrap(err, "unable to get initial delivery channel")
+			return nil, fmt.Errorf("unable to get initial delivery channel: %w", err)
 		}
 	}
 
@@ -276,7 +276,7 @@ func New(opts *Options) (*Rabbit, error) {
 // ValidateOptions validates various combinations of options.
 func ValidateOptions(opts *Options) error {
 	if opts == nil {
-		return errors.New("Options cannot be nil")
+		return errors.New("options cannot be nil")
 	}
 
 	validURL := false
@@ -288,15 +288,15 @@ func ValidateOptions(opts *Options) error {
 	}
 
 	if !validURL {
-		return errors.New("At least one non-empty URL must be provided")
+		return errors.New("at least one non-empty URL must be provided")
 	}
 
 	if len(opts.Bindings) == 0 {
-		return errors.New("At least one Exchange must be specified")
+		return errors.New("at least one Exchange must be specified")
 	}
 
 	if err := validateBindings(opts); err != nil {
-		return errors.Wrap(err, "binding validation failed")
+		return fmt.Errorf("binding validation failed: %w", err)
 	}
 
 	applyDefaults(opts)
@@ -311,24 +311,26 @@ func ValidateOptions(opts *Options) error {
 func validateBindings(opts *Options) error {
 	if opts.Mode == Producer || opts.Mode == Both {
 		if len(opts.Bindings) > 1 {
-			return errors.New("Exactly one Exchange must be specified when publishing messages")
+			return errors.New("exactly one Exchange must be specified when publishing messages")
 		}
 	}
 
 	for _, binding := range opts.Bindings {
 		if binding.ExchangeDeclare {
 			if binding.ExchangeType == "" {
+				// lint:ignore ST1005 ExchangeType is the name of a struct
 				return errors.New("ExchangeType cannot be empty if ExchangeDeclare set to true")
 			}
 		}
 		if binding.ExchangeName == "" {
+			// lint:ignore ST1005 ExchangeType is the name of a struct
 			return errors.New("ExchangeName cannot be empty")
 		}
 
 		// BindingKeys are only needed if Consumer or Both
 		if opts.Mode != Producer {
 			if len(binding.BindingKeys) < 1 {
-				return errors.New("At least one BindingKeys must be specified")
+				return errors.New("at least one BindingKeys must be specified")
 			}
 		}
 	}
@@ -592,7 +594,7 @@ func (r *Rabbit) Publish(ctx context.Context, routingKey string, body []byte, he
 	if r.ProducerServerChannel == nil {
 		ch, err := r.newServerChannel()
 		if err != nil {
-			return errors.Wrap(err, "unable to create server channel")
+			return fmt.Errorf("unable to create server channel: %w", err)
 		}
 
 		r.ProducerRWMutex.Lock()
@@ -633,12 +635,12 @@ func (r *Rabbit) Publish(ctx context.Context, routingKey string, body []byte, he
 		// We did it!
 		return nil
 	case err := <-chanErr:
-		return errors.Wrap(err, "failed to publish message")
+		return fmt.Errorf("failed to publish message: %w", err)
 	case <-ctx.Done():
 		slog.Warn("stopped via context")
 		err := r.ProducerServerChannel.Close()
 		if err != nil {
-			return errors.Wrap(err, "failed to close producer channel")
+			return fmt.Errorf("failed to close producer channel: %w", err)
 		}
 		return errors.New("context cancelled")
 	}
@@ -681,7 +683,7 @@ func (r *Rabbit) Close() error {
 	r.cancel()
 
 	if err := r.Conn.Close(); err != nil {
-		return fmt.Errorf("unable to close amqp connection: %s", err)
+		return fmt.Errorf("unable to close amqp connection: %w", err)
 	}
 
 	r.shutdown = true
@@ -777,11 +779,11 @@ func (r *Rabbit) newServerChannel() (*amqp.Channel, error) {
 
 	ch, err := r.Conn.Channel()
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to instantiate channel")
+		return nil, fmt.Errorf("unable to instantiate channel: %w", err)
 	}
 
 	if err := ch.Qos(r.Options.QosPrefetchCount, r.Options.QosPrefetchSize, false); err != nil {
-		return nil, errors.Wrap(err, "unable to set qos policy")
+		return nil, fmt.Errorf("unable to set qos policy: %w", err)
 	}
 
 	// Only declare queue if in Both or Consumer mode
@@ -811,7 +813,7 @@ func (r *Rabbit) newServerChannel() (*amqp.Channel, error) {
 				false,
 				nil,
 			); err != nil {
-				return nil, errors.Wrap(err, "unable to declare exchange")
+				return nil, fmt.Errorf("unable to declare exchange: %w", err)
 			}
 		}
 
@@ -825,7 +827,7 @@ func (r *Rabbit) newServerChannel() (*amqp.Channel, error) {
 					false,
 					r.Options.QueueArgs,
 				); err != nil {
-					return nil, errors.Wrap(err, "unable to bind queue")
+					return nil, fmt.Errorf("unable to bind queue: %w", err)
 				}
 			}
 		}
@@ -837,7 +839,7 @@ func (r *Rabbit) newServerChannel() (*amqp.Channel, error) {
 func (r *Rabbit) newConsumerChannel() error {
 	serverChannel, err := r.newServerChannel()
 	if err != nil {
-		return errors.Wrap(err, "unable to create new server channel")
+		return fmt.Errorf("unable to create new server channel: %w", err)
 	}
 
 	deliveryChannel, err := serverChannel.Consume(
@@ -850,7 +852,7 @@ func (r *Rabbit) newConsumerChannel() error {
 		nil,
 	)
 	if err != nil {
-		return errors.Wrap(err, "unable to create delivery channel")
+		return fmt.Errorf("unable to create delivery channel: %w", err)
 	}
 
 	r.ProducerServerChannel = serverChannel
@@ -885,7 +887,7 @@ func (r *Rabbit) reconnect() error {
 	}
 
 	if err != nil {
-		return errors.Wrap(err, "all servers failed on reconnect")
+		return fmt.Errorf("all servers failed on reconnect: %w", err)
 	}
 
 	r.Conn = ac
